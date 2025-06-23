@@ -1,21 +1,20 @@
-# Importieren der benötigten Module
-import pyshark  # Für Live-Paketmitschnitt
-import subprocess  # Zum Ausführen von iptables/ip6tables
+import pyshark
+import subprocess
 import os
 import csv
-import getpass  # Für sichere Passwortabfrage
-import socket  # Für lokale IP-Ermittlung
-import ipaddress  # Für IP-Adressprüfung
+import getpass
+import socket
+import ipaddress
+import json
 from datetime import datetime
 
-# Konstante für Logdatei
 BLOCKLIST_FILE = 'blocklist.csv'
-# Netzwerkschnittstelle für den Mitschnitt (anpassen falls nötig)
+OPENSNITCH_EXPORT_FILE = 'opensnitch_blocklist.json'
 INTERFACE = 'enp0s3'
-# Globale Variable für sudo-Passwort
-sudo_password = None
 
-# Eigene lokale IPv4-Adresse ermitteln
+sudo_password = None
+opensnitch_rules = []
+
 def get_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -24,12 +23,10 @@ def get_local_ip():
     finally:
         s.close()
 
-# Manuelle Whitelist: eigene IPs, Loopback
 WHITELIST_IPS = {
     get_local_ip(), "127.0.0.1", "::1"
 }
 
-# Interne/private Netze (IPv4 + IPv6 ULA + link-local)
 INTERNAL_NETS = [
     ipaddress.ip_network("10.0.0.0/8"),
     ipaddress.ip_network("172.16.0.0/12"),
@@ -38,7 +35,6 @@ INTERNAL_NETS = [
     ipaddress.ip_network("fe80::/10"),
 ]
 
-# Liste von Cloudflare-IP-Ranges (manuell hinzugefügt)
 CLOUDFLARE_NETS = [
     ipaddress.ip_network("173.245.48.0/20"),
     ipaddress.ip_network("103.21.244.0/22"),
@@ -64,7 +60,6 @@ CLOUDFLARE_NETS = [
     ipaddress.ip_network("2c0f:f248::/32")
 ]
 
-# Prüft, ob IP in internen oder Cloudflare-Netzen liegt
 def is_in_allowed_ranges(ip_str):
     try:
         ip = ipaddress.ip_address(ip_str)
@@ -75,32 +70,52 @@ def is_in_allowed_ranges(ip_str):
         pass
     return False
 
-# Startet Chromium mit TLS 1.2 als max Version
 def start_chromium():
     chrome_cmd = "/usr/local/bin/chrome --ssl-version-max=tls1.2"
     print(f"[+] Starte Chromium: {chrome_cmd}")
     subprocess.Popen(chrome_cmd.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-# Initialisiert die CSV-Logdatei
 def init_blocklist_csv():
     if not os.path.exists(BLOCKLIST_FILE):
         with open(BLOCKLIST_FILE, 'w', newline='') as f:
             csv.writer(f).writerow(['Zeitstempel', 'Quell-IP', 'Protokoll'])
 
-# Prüft, ob IP bereits geloggt wurde
 def is_ip_already_blocked(ip):
     if not os.path.exists(BLOCKLIST_FILE):
         return False
     with open(BLOCKLIST_FILE, 'r') as f:
         return ip in f.read()
 
-# Loggt geblockte IP in CSV-Datei
 def log_blocked_ip(ip, reason):
     if not is_ip_already_blocked(ip):
         with open(BLOCKLIST_FILE, 'a', newline='') as f:
             csv.writer(f).writerow([datetime.now().isoformat(), ip, reason])
 
-# Fügt iptables/ip6tables-Regel hinzu, falls nicht schon vorhanden
+def add_opensnitch_rule(ip, reason):
+    global opensnitch_rules
+    if any(rule.get("value") == ip for rule in opensnitch_rules):
+        return
+    rule = {
+        "name": f"Block {ip}",
+        "enabled": True,
+        "action": "deny",
+        "duration": "always",
+        "operator": "equal",
+        "field": "dst.ip",
+        "value": ip,
+        "protocol": "any",
+        "log": True,
+        "description": f"Automatisch geblockt: {reason}"
+    }
+    opensnitch_rules.append(rule)
+
+def export_opensnitch_rules():
+    if not opensnitch_rules:
+        return
+    with open(OPENSNITCH_EXPORT_FILE, 'w') as f:
+        json.dump(opensnitch_rules, f, indent=4)
+    print(f"[+] OpenSnitch-Regeln exportiert nach: {OPENSNITCH_EXPORT_FILE}")
+
 def block_ip(ip, reason, is_ipv6=False):
     if ip in WHITELIST_IPS or is_in_allowed_ranges(ip):
         print(f"[ALLOW   - TRUSTED] {ip} ({'IPv6' if is_ipv6 else 'IPv4'})")
@@ -122,12 +137,12 @@ def block_ip(ip, reason, is_ipv6=False):
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if add.returncode == 0:
             log_blocked_ip(ip, reason)
+            add_opensnitch_rule(ip, reason)
         else:
             print(f"[ERROR] {tool} fehlgeschlagen: {add.stderr.strip()}")
     except Exception as e:
         print(f"[ERROR] Ausnahme beim Blockieren: {e}")
 
-# Hauptfunktion: Live-Mitschnitt und Reaktion
 def detect_and_block():
     print(f"[+] Starte Paketmitschnitt auf Schnittstelle: {INTERFACE}")
     capture = pyshark.LiveCapture(
@@ -141,13 +156,11 @@ def detect_and_block():
         )
     )
 
-    # Starte Chromium nach Mitschnittbeginn
     start_chromium()
 
     try:
         for packet in capture.sniff_continuously():
             try:
-                # IP-Adresse und Protokollversion erkennen
                 if 'IP' in packet:
                     src_ip = packet.ip.src
                     ip_version = "IPv4"
@@ -159,27 +172,22 @@ def detect_and_block():
                 else:
                     continue
 
-                # Whitelist und interne IPs überspringen
                 if src_ip in WHITELIST_IPS or is_in_allowed_ranges(src_ip):
                     print(f"[ALLOW   - TRUSTED] {src_ip} ({ip_version})")
                     continue
 
-                # TCP SYN erkennen
                 if 'TCP' in packet and packet.tcp.flags_syn == '1' and packet.tcp.flags_ack == '0':
                     block_ip(src_ip, "TCP SYN", is_ipv6)
 
-                # TLS erkennen: ClientHello oder Application Data
                 elif 'TLS' in packet:
                     if hasattr(packet.tls, 'handshake_type') and packet.tls.handshake_type == '1':
                         block_ip(src_ip, "TLS ClientHello", is_ipv6)
                     elif hasattr(packet.tls, 'record_content_type') and packet.tls.record_content_type == '23':
                         block_ip(src_ip, "TLS Application Data", is_ipv6)
 
-                # QUIC erkennen: UDP-Port 443
                 elif 'UDP' in packet and (packet.udp.dstport == '443' or packet.udp.srcport == '443'):
                     block_ip(src_ip, "QUIC UDP 443", is_ipv6)
 
-                # ICMPv6 außer ND blockieren
                 elif 'ICMPv6' in packet:
                     icmp_type = int(packet.icmpv6.type)
                     if icmp_type in (135, 136):
@@ -194,10 +202,9 @@ def detect_and_block():
                 continue
     except KeyboardInterrupt:
         print("\n[!] Mitschnitt beendet.")
+        export_opensnitch_rules()
 
-# Hauptprogramm: Passwort abfragen, CSV anlegen, Mitschnitt starten
 if __name__ == "__main__":
     sudo_password = getpass.getpass("Bitte sudo-Passwort eingeben: ")
     init_blocklist_csv()
     detect_and_block()
-
