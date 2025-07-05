@@ -1,0 +1,4 @@
+IP,CNAME,Gesendet,Empfangen
+213.230.210.230,boo.yoyo.org,63,42
+224.0.0.251,mdns.mcast.net,0,1
+224.0.0.22,igmp.mcast.net,0,10
