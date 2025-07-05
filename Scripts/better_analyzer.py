@@ -38,7 +38,7 @@ def resolve_hostname(ip):
     except Exception:
         return None
 
-def analyze_packets(capture, ip_version, local_host_ip):
+def analyze_packets(capture, ip_version, local_host_ip, hostname_map):
     recv_counts = defaultdict(int)
     sent_counts = defaultdict(int)
     proto_per_ip = defaultdict(lambda: defaultdict(int))
@@ -69,66 +69,87 @@ def analyze_packets(capture, ip_version, local_host_ip):
             proto_per_ip[dst][proto] += 1
             ip_set.add(other_ip)
 
+            # DNS-Antworten mitschneiden
+            if 'DNS' in pkt:
+                dns = pkt.dns
+                if hasattr(dns, 'a') and hasattr(dns, 'qry_name'):
+                    hostname_map[dns.a] = dns.qry_name
+                if hasattr(dns, 'aaaa') and hasattr(dns, 'qry_name'):
+                    hostname_map[dns.aaaa] = dns.qry_name
+
         except AttributeError:
             continue
 
     return recv_counts, sent_counts, proto_per_ip, ip_set
 
-def plot_pie(data_dict, title, filename):
+def make_label(ip, host_ip, hostname_map):
+    if ip == host_ip:
+        return f"*HOST* {ip}"
+    label = hostname_map.get(ip)
+    if not label:
+        label = resolve_hostname(ip)
+    if not label:
+        return ip
+    return f"{label} ({ip})"
+
+def plot_pie(data_dict, title, filename, host_ip, hostname_map):
     if not data_dict:
         return
     df = pd.DataFrame(data_dict.items(), columns=['IP', 'Anzahl'])
     df = df.sort_values(by='Anzahl', ascending=False)
+    labels = [make_label(ip, host_ip, hostname_map) for ip in df['IP']]
     plt.figure(figsize=(16, 8))
-    plt.pie(df['Anzahl'], labels=df['IP'], autopct='%1.1f%%')
+    plt.pie(df['Anzahl'], labels=labels, autopct='%1.1f%%')
     plt.title(title)
     plt.tight_layout()
     plt.savefig(filename)
     plt.close()
 
-def plot_stacked_bar(recv, sent, filename):
+def plot_stacked_bar(recv, sent, filename, host_ip, hostname_map):
     if not recv:
         return
     ips = list(recv.keys())
+    labels = [make_label(ip, host_ip, hostname_map) for ip in ips]
     recv_vals = [recv[ip] for ip in ips]
     sent_vals = [sent.get(ip, 0) for ip in ips]
     plt.figure(figsize=(16, 8))
     x = range(len(ips))
     plt.bar(x, recv_vals, label='Empfangen')
     plt.bar(x, sent_vals, bottom=recv_vals, label='Gesendet')
-    plt.xticks(x, ips, rotation=45, ha='right', fontsize=8)
+    plt.xticks(x, labels, rotation=45, ha='right', fontsize=8)
     plt.legend()
     plt.title('Paketanzahl pro IP')
     plt.tight_layout()
     plt.savefig(filename)
     plt.close()
 
-def plot_protocols(proto_per_ip, filename):
+def plot_protocols(proto_per_ip, filename, host_ip, hostname_map):
     if not proto_per_ip:
         return
     all_protocols = sorted(set(p for ip in proto_per_ip for p in proto_per_ip[ip]))
     ips = list(proto_per_ip.keys())
+    labels = [make_label(ip, host_ip, hostname_map) for ip in ips]
     bottom = defaultdict(int)
     plt.figure(figsize=(16, 8))
     for proto in all_protocols:
         heights = [proto_per_ip[ip].get(proto, 0) for ip in ips]
-        plt.bar(ips, heights, bottom=[bottom[ip] for ip in ips], label=proto)
+        plt.bar(labels, heights, bottom=[bottom[ip] for ip in ips], label=proto)
         for i, h in enumerate(heights):
             bottom[ips[i]] += h
-    plt.xticks(ips, rotation=45, ha='right', fontsize=8)
+    plt.xticks(rotation=45, ha='right', fontsize=8)
     plt.legend()
     plt.title('Protokollverwendung pro IP')
     plt.tight_layout()
     plt.savefig(filename)
     plt.close()
 
-def export_cname_table(ip_set, recv_counts, sent_counts, filename):
+def export_cname_table(ip_set, recv_counts, sent_counts, filename, hostname_map):
     cname_data = []
     for ip in tqdm(ip_set, desc="Reverse DNS"):
-        cname = resolve_hostname(ip)
+        hostname = hostname_map.get(ip) or resolve_hostname(ip)
         cname_data.append({
             'IP': ip,
-            'CNAME': cname,
+            'CNAME': hostname,
             'Gesendet': sent_counts.get(ip, 0),
             'Empfangen': recv_counts.get(ip, 0)
         })
@@ -137,7 +158,6 @@ def export_cname_table(ip_set, recv_counts, sent_counts, filename):
 
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-
     print("[*] Lade PCAP-Datei...")
     cap = pyshark.FileCapture(PCAP_FILE, only_summaries=False)
     if MAX_PACKETS:
@@ -145,6 +165,8 @@ def main():
 
     cap_ipv4 = (pkt for pkt in cap if hasattr(pkt, 'ip'))
     cap_ipv6 = (pkt for pkt in cap if hasattr(pkt, 'ipv6'))
+
+    hostname_map = {}
 
     runs = [
         ('ipv4', cap_ipv4, HOST_IPV4),
@@ -154,17 +176,21 @@ def main():
     for version, stream, host_ip in runs:
         if not host_ip:
             continue
-        recv, sent, proto, ip_set = analyze_packets(stream, version, host_ip)
+        recv, sent, proto, ip_set = analyze_packets(stream, version, host_ip, hostname_map)
         suffix = f"_{version}"
         plot_pie({ip: recv[ip] for ip in ip_set}, f'Empfangene Pakete ({version.upper()})',
-                 os.path.join(OUTPUT_DIR, f'empfangene_pakete{suffix}.png'))
+                 os.path.join(OUTPUT_DIR, f'empfangene_pakete{suffix}.png'), host_ip, hostname_map)
         plot_pie({ip: sent[ip] for ip in ip_set}, f'Gesendete Pakete ({version.upper()})',
-                 os.path.join(OUTPUT_DIR, f'gesendete_pakete{suffix}.png'))
-        plot_stacked_bar(recv, sent, os.path.join(OUTPUT_DIR, f'paketanzahl_pro_ip{suffix}.png'))
-        plot_protocols(proto, os.path.join(OUTPUT_DIR, f'protokolle_pro_ip{suffix}.png'))
-        export_cname_table(ip_set, recv, sent, os.path.join(OUTPUT_DIR, f'ip_cname_tabelle{suffix}.csv'))
+                 os.path.join(OUTPUT_DIR, f'gesendete_pakete{suffix}.png'), host_ip, hostname_map)
+        plot_stacked_bar(recv, sent, os.path.join(OUTPUT_DIR, f'paketanzahl_pro_ip{suffix}.png'),
+                         host_ip, hostname_map)
+        plot_protocols(proto, os.path.join(OUTPUT_DIR, f'protokolle_pro_ip{suffix}.png'),
+                       host_ip, hostname_map)
+        export_cname_table(ip_set, recv, sent,
+                           os.path.join(OUTPUT_DIR, f'ip_cname_tabelle{suffix}.csv'),
+                           hostname_map)
 
-    print(f"[✓] Analyse abgeschlossen. Ergebnisse gespeichert in: {OUTPUT_DIR}")
+    print(f"Analyse abgeschlossen. Ergebnisse gespeichert in: {OUTPUT_DIR}")
 
 if __name__ == "__main__":
     main()
