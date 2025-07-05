@@ -8,10 +8,10 @@ from collections import defaultdict
 from tqdm import tqdm
 
 # ------------------ KONFIGURATION -------------------
-PCAP_FILE = '../Browsers/Ungoogled_Chromium/Network/UG-Chromium-UBlock-10min.pcapng'
+PCAP_FILE = '../Browsers/Ungoogled_Chromium/Network/UG-Chromium-10min.pcapng'
 HOST_IPV4 = '192.168.178.109'
 HOST_IPV6 = '2003:d2:bf2b:dd00:a1b4:2082:a669:c5cb'
-ANALYSIS_NAME = 'ungoogled-chromium-ublock'
+ANALYSIS_NAME = 'ungoogled-chromium'
 MAX_PACKETS = None
 
 OUTPUT_DIR = os.path.join('../analysis', ANALYSIS_NAME)
@@ -92,18 +92,31 @@ def make_label(ip, host_ip, hostname_map):
         return ip
     return f"{label} ({ip})"
 
-def plot_pie(data_dict, title, filename, host_ip, hostname_map):
-    if not data_dict:
+def plot_pie(data_dict, title, filename, host_ip=None, hostname_map=None):
+    if not data_dict or sum(data_dict.values()) == 0:
+        print(f"[!] Überspringe {title} – keine Daten.")
         return
+
+    labels = []
+    for ip, count in data_dict.items():
+        if hostname_map and ip in hostname_map:
+            label = f"{hostname_map[ip]} ({ip})"
+        else:
+            label = ip
+        if ip == host_ip:
+            label = f"*HOST* {ip}"
+        labels.append(label)
+
     df = pd.DataFrame(data_dict.items(), columns=['IP', 'Anzahl'])
     df = df.sort_values(by='Anzahl', ascending=False)
-    labels = [make_label(ip, host_ip, hostname_map) for ip in df['IP']]
+
     plt.figure(figsize=(16, 8))
     plt.pie(df['Anzahl'], labels=labels, autopct='%1.1f%%')
     plt.title(title)
     plt.tight_layout()
     plt.savefig(filename)
     plt.close()
+
 
 def plot_stacked_bar(recv, sent, filename, host_ip, hostname_map):
     if not recv:
