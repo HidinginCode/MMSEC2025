@@ -1,0 +1,75 @@
+import pyshark
+from collections import defaultdict
+
+# === Konfiguration ===
+pcap_file = 'Firefox_OS.pcapng'
+target_ip = '10.0.2.15'
+
+# === Zwischenspeicher ===
+packet_count = 0
+handshakes = []
+states = defaultdict(list)
+
+# TCP Flag-Bitmaske
+def parse_tcp_flags(flags_hex):
+    try:
+        flags = int(flags_hex, 16)
+        return {
+            'SYN': bool(flags & 0x02),
+            'ACK': bool(flags & 0x10),
+            'RST': bool(flags & 0x04),
+        }
+    except:
+        return {}
+
+print(f"Analysiere Datei: {pcap_file}")
+capture = pyshark.FileCapture(pcap_file, display_filter=f"ip.addr == {target_ip} && tcp", use_json=True)
+
+for pkt in capture:
+    try:
+        if not hasattr(pkt, 'ip') or not hasattr(pkt, 'tcp'):
+            continue
+
+        ip = pkt.ip
+        tcp = pkt.tcp
+
+        src = ip.src
+        dst = ip.dst
+        sport = tcp.srcport
+        dport = tcp.dstport
+        direction = (src, sport, dst, dport)
+        reverse = (dst, dport, src, sport)
+
+        flags_raw = tcp.flags
+        flags = parse_tcp_flags(flags_raw)
+
+        packet_count += 1
+
+        if flags.get('SYN') and not flags.get('ACK'):
+            states[direction] = ['SYN']
+            print(f"[SYN]     {src}:{sport} -> {dst}:{dport}")
+
+        elif flags.get('SYN') and flags.get('ACK'):
+            if reverse in states and states[reverse] == ['SYN']:
+                states[reverse].append('SYN-ACK')
+                print(f"[SYN-ACK] {src}:{sport} -> {dst}:{dport}")
+
+        elif flags.get('ACK') and not flags.get('SYN'):
+            if direction in states and states[direction] == ['SYN', 'SYN-ACK']:
+                states[direction].append('ACK')
+                handshakes.append(direction)
+                print(f"[ACK]     {src}:{sport} -> {dst}:{dport} HANDSHAKE erkannt")
+
+    except Exception as e:
+        print("Fehler:", e)
+        continue
+
+capture.close()
+
+# === Ausgabe ===
+print("\n--- Analyse abgeschlossen ---")
+print(f"TCP-Pakete mit {target_ip}: {packet_count}")
+print(f"Vollständige TCP-Handshakes erkannt: {len(handshakes)}")
+
+for i, hs in enumerate(handshakes, 1):
+    print(f"{i}. {hs[0]}:{hs[1]} → {hs[2]}:{hs[3]}")
