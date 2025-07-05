@@ -8,10 +8,10 @@ from collections import defaultdict
 from tqdm import tqdm
 
 # ------------------ KONFIGURATION -------------------
-PCAP_FILE = '../Browsers/Ungoogled_Chromium/Network/UG-Chromium-10min.pcapng'
-HOST_IPV4 = '192.168.178.109'
-HOST_IPV6 = '2003:d2:bf2b:dd00:a1b4:2082:a669:c5cb'
-ANALYSIS_NAME = 'ungoogled-chromium'
+PCAP_FILE = '../Browsers/Chromium/Network/chromium-10min.pcapng'
+HOST_IPV4 = '10.0.2.15'
+HOST_IPV6 = 'fd17:625c:f037:2:a928:fc1a:2e4f:7be'
+ANALYSIS_NAME = 'chromium'
 MAX_PACKETS = None
 
 OUTPUT_DIR = os.path.join('../analysis', ANALYSIS_NAME)
