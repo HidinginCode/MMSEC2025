@@ -1,0 +1,29 @@
+
+34.160.90.233: NetName: GOOGL-2, Organization: Google LLC (GOOGL-2)
+
+34.160.122.198: NetName: GOOGL-2, Organization: Google LLC (GOOGL-2)
+
+45.149.104.1: netname: MULLVA-45-149-104-0: organisation: ORG-MVA36-RIPE -> Mullvad VPN AB
+
+89.187.167.42: netname: CDN77-LON
+
+104.26.14.96: NetName: CLOUDFLARENET: Organization: Cloudflare, Inc. (CLOUD14)
+
+151.101.193.91: NetName: SKYCA-3: Organization: Fastly, Inc. (SKYCA-3)
+
+172.66.44.77: NetName: CLOUDFLARENET: Organization: Cloudflare, Inc. (CLOUD14)
+
+184.30.131.245: NetName: AKAMAI: Organization: Akamai Technologies, Inc. (AKAMAI)
+
+185.199.110.153: netname: US-GITHUB-20170413: organisation:ORG-GI58-RIPE: org-name: GitHub, Inc.
+
+185.199.111.153:  netname: US-GITHUB-20170413: organisation:ORG-GI58-RIPE: org-name: GitHub, Inc.
+
+192.168.178.1: NetName: PRIVATE-ADDRESS-CBLK-RFC1918-IANA-RESERVED: Organization: Internet Assigned Numbers Authority (IANA)
+
+194.242.2.2: netname: MULLVA-194-242-2-0: organisation:   ORG-MVA19-RIPE
+
+199.232.53.91 No Information on https://www.ipvoid.com/whois/
+but: https://www.lookip.net/ got: Company Fastly
+
+213.230.210.230: netname: MASAU-LTD: descr:Masau Ltd - v4
