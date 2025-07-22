@@ -65,11 +65,11 @@ def print_stats(stats, resolved):
     print("Netzwerkstatistik:")
     print(f"IPv4-Pakete: {stats['ipv4_packets']}")
     print(f"IPv6-Pakete: {stats['ipv6_packets']}")
-    print("\n🔝 Top-Protokolle:")
+    print("\n Top-Protokolle:")
     for proto, count in stats['protocols'].most_common(10):
         print(f"  {proto}: {count} Pakete")
 
-    print("\n🌍 Externe IP-Adressen (Top 10):")
+    print("\n Externe IP-Adressen (Top 10):")
     for ip, count in stats['external_ips'].most_common(10):
         resolved_name = resolved[ip] or 'Unbekannt'
         print(f"  {ip} ({resolved_name}): {count} Pakete")
